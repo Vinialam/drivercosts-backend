@@ -1,52 +1,58 @@
 // --- Backend para a aplicação DriverCosts ---
-// Versão com autenticação e verificação de token.
-
-// Passo 1: Instale as dependências:
-// npm install express mysql2 cors firebase-admin
-
-// Passo 2: Configure as variáveis de ambiente na Render.
-
-// Passo 3: Faça o download do seu ficheiro de credenciais do Firebase
-// e adicione o nome do ficheiro à variável de ambiente GOOGLE_APPLICATION_CREDENTIALS na Render.
+// Versão final com autenticação e verificação de token.
 
 const express = require("express");
 const mysql = require("mysql2/promise");
 const cors = require("cors");
 const admin = require("firebase-admin");
 
-// Inicialização do Firebase Admin SDK
-// Ele irá procurar automaticamente as credenciais na variável de ambiente.
+// --- Inicialização do Firebase Admin SDK ---
+// CORREÇÃO: Adiciona uma verificação explícita para a variável de ambiente.
+// Se a chave não for encontrada, o servidor não irá arrancar e dará um erro claro.
 try {
-  admin.initializeApp();
+  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+    throw new Error(
+      "A variável de ambiente GOOGLE_APPLICATION_CREDENTIALS_JSON não foi definida na Render."
+    );
+  }
+  const serviceAccount = JSON.parse(
+    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
+  );
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
   console.log("Firebase Admin SDK inicializado com sucesso.");
 } catch (e) {
-  console.error(
-    "Erro ao inicializar Firebase Admin SDK. Certifique-se de que as credenciais estão configuradas.",
-    e
-  );
+  console.error("ERRO CRÍTICO ao inicializar Firebase Admin SDK:", e.message);
+  // Impede o servidor de arrancar se a configuração do Firebase falhar.
+  process.exit(1);
 }
 
 const app = express();
 const port = process.env.PORT || 3001;
 
+// Middlewares
 app.use(cors());
 app.use(express.json());
 
+// --- CONFIGURAÇÃO DA BASE DE DADOS (A LER DA NUVEM) ---
 const dbConfig = {
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_DATABASE,
   port: process.env.DB_PORT,
-  ssl: { rejectUnauthorized: false },
+  ssl: {
+    rejectUnauthorized: false,
+  },
 };
 
+// Função para criar a ligação com a base de dados
 async function createConnection() {
   return await mysql.createConnection(dbConfig);
 }
 
 // --- Middleware de Autenticação ---
-// Este middleware irá verificar todos os pedidos para rotas protegidas.
 const checkAuth = async (req, res, next) => {
   const idToken = req.headers.authorization?.split("Bearer ")[1];
   if (!idToken) {
@@ -55,7 +61,7 @@ const checkAuth = async (req, res, next) => {
 
   try {
     const decodedToken = await admin.auth().verifyIdToken(idToken);
-    req.user = decodedToken; // Adiciona os dados do utilizador ao pedido
+    req.user = decodedToken;
     next();
   } catch (error) {
     console.error("Erro ao verificar token:", error);
@@ -63,11 +69,10 @@ const checkAuth = async (req, res, next) => {
   }
 };
 
-// --- ROTAS DA API (Protegidas) ---
+// --- ROTAS DA API ---
 
 app.get("/", (req, res) => res.send("Servidor DriverCosts está a funcionar!"));
 
-// Todas as rotas abaixo agora exigem um token válido.
 app.use("/api", checkAuth);
 
 app.get("/api/vehicles", async (req, res) => {
@@ -201,7 +206,6 @@ app.delete("/api/vehicles/:vehicleId", async (req, res) => {
 
 app.get("/api/logs/:vehicleId", async (req, res) => {
   const { vehicleId } = req.params;
-  // Adicional: verificar se o veículo pertence ao utilizador autenticado
   try {
     const connection = await createConnection();
     const [rows] = await connection.execute(
@@ -219,6 +223,12 @@ app.get("/api/logs/:vehicleId", async (req, res) => {
 app.post("/api/logs/:vehicleId", async (req, res) => {
   const { vehicleId } = req.params;
   const logData = req.body;
+
+  if (logData.date) {
+    logData.data = logData.date;
+    delete logData.date;
+  }
+
   logData.id_veiculo = vehicleId;
 
   const columns = Object.keys(logData).join(", ");
