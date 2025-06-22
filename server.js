@@ -1,20 +1,19 @@
 // --- Backend para a aplicação DriverCosts ---
-// Versão adaptada para ler as credenciais da base de dados
-// a partir das variáveis de ambiente configuradas na Render.
+// Versão final adaptada para a Render.
 
 const express = require("express");
 const mysql = require("mysql2/promise");
 const cors = require("cors");
 
 const app = express();
-const port = 3001; // Porta onde o servidor vai correr
+// CORREÇÃO: Usa a porta fornecida pela Render, ou 3001 como alternativa local.
+const port = process.env.PORT || 3001;
 
 // Middlewares
 app.use(cors());
 app.use(express.json());
 
 // --- CONFIGURAÇÃO DA BASE DE DADOS (A LER DA NUVEM) ---
-// Esta secção agora usa as variáveis de ambiente que configurou na Render.
 const dbConfig = {
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
@@ -22,9 +21,7 @@ const dbConfig = {
   database: process.env.DB_DATABASE,
   port: process.env.DB_PORT,
   ssl: {
-    // CORREÇÃO: Esta opção torna a ligação SSL menos restrita,
-    // o que é frequentemente necessário para ligar serviços na nuvem.
-    rejectUnauthorized: false,
+    rejectUnauthorized: false, // Necessário para ligar ao Railway
   },
 };
 
@@ -35,7 +32,6 @@ async function createConnection() {
 
 // --- ROTAS DA API ---
 
-// Rota de teste
 app.get("/", (req, res) => {
   res.send("Servidor DriverCosts está a funcionar!");
 });
@@ -97,11 +93,13 @@ app.post("/api/vehicles/:userId", async (req, res) => {
 
     const sql = `INSERT INTO Veiculo (${columns}) VALUES (${placeholders})`;
     const [result] = await connection.execute(sql, values);
+
+    const [newVehicle] = await connection.execute(
+      "SELECT * FROM Veiculo WHERE id_veiculo = ?",
+      [result.insertId]
+    );
     await connection.end();
 
-    const [newVehicle] = await (
-      await createConnection()
-    ).execute("SELECT * FROM Veiculo WHERE id_veiculo = ?", [result.insertId]);
     res.status(201).json(newVehicle[0]);
   } catch (error) {
     console.error("Erro ao adicionar veículo:", error);
@@ -144,11 +142,13 @@ app.put("/api/vehicles/:userId/:vehicleId", async (req, res) => {
 
     const sql = `UPDATE Veiculo SET ${setClauses} WHERE id_veiculo = ? AND id_motorista = ?`;
     await connection.execute(sql, values);
+
+    const [updatedVehicle] = await connection.execute(
+      "SELECT * FROM Veiculo WHERE id_veiculo = ?",
+      [vehicleId]
+    );
     await connection.end();
 
-    const [updatedVehicle] = await (
-      await createConnection()
-    ).execute("SELECT * FROM Veiculo WHERE id_veiculo = ?", [vehicleId]);
     res.json(updatedVehicle[0]);
   } catch (error) {
     console.error("Erro ao atualizar veículo:", error);
@@ -226,6 +226,7 @@ app.post("/api/logs/:vehicleId", async (req, res) => {
 });
 
 // Iniciar o servidor
-app.listen(port, () => {
-  console.log(`Servidor DriverCosts a correr em http://localhost:${port}`);
+// CORREÇÃO: O servidor agora ouve em '0.0.0.0', que é necessário para a Render.
+app.listen(port, "0.0.0.0", () => {
+  console.log(`Servidor DriverCosts a correr na porta ${port}`);
 });
