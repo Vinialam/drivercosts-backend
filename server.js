@@ -1,14 +1,6 @@
 // --- Backend para a aplicação DriverCosts ---
-// Este servidor usa Express.js para criar uma API que comunica
-// com a base de dados MySQL.
-
-// Passo 1: Instale as dependências com:
-// npm install express mysql2 cors
-
-// Passo 2: Configure os dados da sua base de dados MySQL abaixo.
-
-// Passo 3: Execute o servidor com:
-// node server.js
+// Versão adaptada para ler as credenciais da base de dados
+// a partir das variáveis de ambiente configuradas na Render.
 
 const express = require("express");
 const mysql = require("mysql2/promise");
@@ -18,16 +10,22 @@ const app = express();
 const port = 3001; // Porta onde o servidor vai correr
 
 // Middlewares
-app.use(cors()); // Permite que o frontend faça pedidos a este servidor
-app.use(express.json()); // Permite que o servidor entenda JSON nos pedidos
+app.use(cors());
+app.use(express.json());
 
-// --- CONFIGURAÇÃO DA BASE DE DADOS ---
-// Altere estes valores para os da sua base de dados MySQL
+// --- CONFIGURAÇÃO DA BASE DE DADOS (A LER DA NUVEM) ---
+// Esta secção agora usa as variáveis de ambiente que configurou na Render.
 const dbConfig = {
-  host: "localhost",
-  user: "root",
-  password: "1234", // Password atualizada
-  database: "drivercosts_db", // Altere para o nome da sua base de dados
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_DATABASE,
+  port: process.env.DB_PORT,
+  ssl: {
+    // CORREÇÃO: Esta opção torna a ligação SSL menos restrita,
+    // o que é frequentemente necessário para ligar serviços na nuvem.
+    rejectUnauthorized: false,
+  },
 };
 
 // Função para criar a ligação com a base de dados
@@ -197,7 +195,6 @@ app.post("/api/logs/:vehicleId", async (req, res) => {
   const { vehicleId } = req.params;
   const logData = req.body;
 
-  // CORREÇÃO: Renomeia o campo 'date' do frontend para 'data' do backend/DB
   if (logData.date) {
     logData.data = logData.date;
     delete logData.date;
