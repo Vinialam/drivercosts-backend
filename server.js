@@ -1,49 +1,82 @@
 // --- Backend para a aplicação DriverCosts ---
-// Versão final adaptada para a Render.
+// Versão com autenticação e verificação de token.
+
+// Passo 1: Instale as dependências:
+// npm install express mysql2 cors firebase-admin
+
+// Passo 2: Configure as variáveis de ambiente na Render.
+
+// Passo 3: Faça o download do seu ficheiro de credenciais do Firebase
+// e adicione o nome do ficheiro à variável de ambiente GOOGLE_APPLICATION_CREDENTIALS na Render.
 
 const express = require("express");
 const mysql = require("mysql2/promise");
 const cors = require("cors");
+const admin = require("firebase-admin");
+
+// Inicialização do Firebase Admin SDK
+// Ele irá procurar automaticamente as credenciais na variável de ambiente.
+try {
+  admin.initializeApp();
+  console.log("Firebase Admin SDK inicializado com sucesso.");
+} catch (e) {
+  console.error(
+    "Erro ao inicializar Firebase Admin SDK. Certifique-se de que as credenciais estão configuradas.",
+    e
+  );
+}
 
 const app = express();
-// CORREÇÃO: Usa a porta fornecida pela Render, ou 3001 como alternativa local.
 const port = process.env.PORT || 3001;
 
-// Middlewares
 app.use(cors());
 app.use(express.json());
 
-// --- CONFIGURAÇÃO DA BASE DE DADOS (A LER DA NUVEM) ---
 const dbConfig = {
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_DATABASE,
   port: process.env.DB_PORT,
-  ssl: {
-    rejectUnauthorized: false, // Necessário para ligar ao Railway
-  },
+  ssl: { rejectUnauthorized: false },
 };
 
-// Função para criar a ligação com a base de dados
 async function createConnection() {
   return await mysql.createConnection(dbConfig);
 }
 
-// --- ROTAS DA API ---
+// --- Middleware de Autenticação ---
+// Este middleware irá verificar todos os pedidos para rotas protegidas.
+const checkAuth = async (req, res, next) => {
+  const idToken = req.headers.authorization?.split("Bearer ")[1];
+  if (!idToken) {
+    return res.status(401).send("Não autorizado: Token não fornecido.");
+  }
 
-app.get("/", (req, res) => {
-  res.send("Servidor DriverCosts está a funcionar!");
-});
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    req.user = decodedToken; // Adiciona os dados do utilizador ao pedido
+    next();
+  } catch (error) {
+    console.error("Erro ao verificar token:", error);
+    return res.status(403).send("Não autorizado: Token inválido.");
+  }
+};
 
-// GET: Obter todos os veículos de um motorista
-app.get("/api/vehicles/:userId", async (req, res) => {
-  const { userId } = req.params;
+// --- ROTAS DA API (Protegidas) ---
+
+app.get("/", (req, res) => res.send("Servidor DriverCosts está a funcionar!"));
+
+// Todas as rotas abaixo agora exigem um token válido.
+app.use("/api", checkAuth);
+
+app.get("/api/vehicles", async (req, res) => {
+  const userId = req.user.uid;
   try {
     const connection = await createConnection();
     await connection.execute(
-      "INSERT IGNORE INTO Motorista (id_motorista) VALUES (?)",
-      [userId]
+      "INSERT IGNORE INTO Motorista (id_motorista, email, nome) VALUES (?, ?, ?)",
+      [userId, req.user.email, req.user.name || null]
     );
     const [rows] = await connection.execute(
       "SELECT * FROM Veiculo WHERE id_motorista = ?",
@@ -57,12 +90,9 @@ app.get("/api/vehicles/:userId", async (req, res) => {
   }
 });
 
-// POST: Adicionar um novo veículo
-app.post("/api/vehicles/:userId", async (req, res) => {
-  const { userId } = req.params;
-  const vehicleData = { ...req.body };
-
-  vehicleData.id_motorista = userId;
+app.post("/api/vehicles", async (req, res) => {
+  const userId = req.user.uid;
+  const vehicleData = { ...req.body, id_motorista: userId };
 
   const numericFields = [
     "ano",
@@ -75,7 +105,6 @@ app.post("/api/vehicles/:userId", async (req, res) => {
     "custo_combustivel",
     "consumo_km_por_litro",
     "custo_eletricidade_kwh",
-    "lucro_desejado_diario",
   ];
   for (const field of numericFields) {
     if (vehicleData[field] === "" || vehicleData[field] == null) {
@@ -107,11 +136,10 @@ app.post("/api/vehicles/:userId", async (req, res) => {
   }
 });
 
-// PUT: Atualizar um veículo existente
-app.put("/api/vehicles/:userId/:vehicleId", async (req, res) => {
-  const { userId, vehicleId } = req.params;
+app.put("/api/vehicles/:vehicleId", async (req, res) => {
+  const userId = req.user.uid;
+  const { vehicleId } = req.params;
   const vehicleData = { ...req.body };
-
   delete vehicleData.id_veiculo;
 
   const numericFields = [
@@ -125,7 +153,6 @@ app.put("/api/vehicles/:userId/:vehicleId", async (req, res) => {
     "custo_combustivel",
     "consumo_km_por_litro",
     "custo_eletricidade_kwh",
-    "lucro_desejado_diario",
   ];
   for (const field of numericFields) {
     if (vehicleData[field] === "" || vehicleData[field] == null) {
@@ -148,7 +175,6 @@ app.put("/api/vehicles/:userId/:vehicleId", async (req, res) => {
       [vehicleId]
     );
     await connection.end();
-
     res.json(updatedVehicle[0]);
   } catch (error) {
     console.error("Erro ao atualizar veículo:", error);
@@ -156,9 +182,9 @@ app.put("/api/vehicles/:userId/:vehicleId", async (req, res) => {
   }
 });
 
-// DELETE: Apagar um veículo
-app.delete("/api/vehicles/:userId/:vehicleId", async (req, res) => {
-  const { userId, vehicleId } = req.params;
+app.delete("/api/vehicles/:vehicleId", async (req, res) => {
+  const userId = req.user.uid;
+  const { vehicleId } = req.params;
   try {
     const connection = await createConnection();
     await connection.execute(
@@ -173,9 +199,9 @@ app.delete("/api/vehicles/:userId/:vehicleId", async (req, res) => {
   }
 });
 
-// GET: Obter todos os logs diários de um veículo
 app.get("/api/logs/:vehicleId", async (req, res) => {
   const { vehicleId } = req.params;
+  // Adicional: verificar se o veículo pertence ao utilizador autenticado
   try {
     const connection = await createConnection();
     const [rows] = await connection.execute(
@@ -190,16 +216,9 @@ app.get("/api/logs/:vehicleId", async (req, res) => {
   }
 });
 
-// POST/PUT (UPSERT): Adicionar ou atualizar um log diário
 app.post("/api/logs/:vehicleId", async (req, res) => {
   const { vehicleId } = req.params;
   const logData = req.body;
-
-  if (logData.date) {
-    logData.data = logData.date;
-    delete logData.date;
-  }
-
   logData.id_veiculo = vehicleId;
 
   const columns = Object.keys(logData).join(", ");
@@ -207,11 +226,9 @@ app.post("/api/logs/:vehicleId", async (req, res) => {
     .map(() => "?")
     .join(", ");
   const values = Object.values(logData);
-
   const onUpdate = Object.keys(logData)
     .map((key) => `${key} = VALUES(${key})`)
     .join(", ");
-
   const sql = `INSERT INTO LogDiario (${columns}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${onUpdate}`;
 
   try {
@@ -225,8 +242,6 @@ app.post("/api/logs/:vehicleId", async (req, res) => {
   }
 });
 
-// Iniciar o servidor
-// CORREÇÃO: O servidor agora ouve em '0.0.0.0', que é necessário para a Render.
 app.listen(port, "0.0.0.0", () => {
   console.log(`Servidor DriverCosts a correr na porta ${port}`);
 });
