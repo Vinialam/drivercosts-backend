@@ -12,7 +12,7 @@ try {
     console.log("Firebase Admin SDK inicializado.");
   } else {
     throw new Error(
-      "Variável GOOGLE_APPLICATION_CREDENTIALS_JSON não definida."
+      "A variável de ambiente GOOGLE_APPLICATION_CREDENTIALS_JSON não foi definida na Render."
     );
   }
 } catch (e) {
@@ -72,11 +72,50 @@ app.get("/api/vehicles", async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
-// ... (outras rotas de veículos: POST, PUT, DELETE)
 
-// Rotas de Logs Diários
+app.post("/api/vehicles", async (req, res) => {
+  const { uid } = req.user;
+  const vehicleData = { ...req.body, id_motorista: uid };
+  const numericFields = [
+    "ano",
+    "financiamento",
+    "seguro",
+    "manutencao",
+    "outras_despesas_fixas",
+    "despesas_pessoais",
+    "dias_trabalho",
+    "custo_combustivel",
+    "consumo_km_por_litro",
+    "custo_eletricidade_kwh",
+  ];
+  for (const field of numericFields) {
+    if (vehicleData[field] === "" || vehicleData[field] == null) {
+      vehicleData[field] = null;
+    }
+  }
+  try {
+    const connection = await createConnection();
+    const columns = Object.keys(vehicleData).join(", ");
+    const placeholders = Object.keys(vehicleData)
+      .map(() => "?")
+      .join(", ");
+    const values = Object.values(vehicleData);
+    const sql = `INSERT INTO Veiculo (${columns}) VALUES (${placeholders})`;
+    const [result] = await connection.execute(sql, values);
+    const [newVehicle] = await connection.execute(
+      "SELECT * FROM Veiculo WHERE id_veiculo = ?",
+      [result.insertId]
+    );
+    await connection.end();
+    res.status(201).json(newVehicle[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ... (outras rotas de veículos: PUT, DELETE)
+
 app.get("/api/logs/:vehicleId", async (req, res) => {
-  // Adicionar verificação de dono do veículo
   try {
     const connection = await createConnection();
     const [rows] = await connection.execute(
@@ -89,34 +128,51 @@ app.get("/api/logs/:vehicleId", async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
-// ... (outra rota de Log: POST)
+
+app.post("/api/logs/:vehicleId", async (req, res) => {
+  const logData = { ...req.body, id_veiculo: req.params.vehicleId };
+  const columns = Object.keys(logData).join(", ");
+  const placeholders = Object.keys(logData)
+    .map(() => "?")
+    .join(", ");
+  const values = Object.values(logData);
+  const onUpdate = Object.keys(logData)
+    .map((key) => `${key} = VALUES(${key})`)
+    .join(", ");
+  const sql = `INSERT INTO LogDiario (${columns}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${onUpdate}`;
+  try {
+    const connection = await createConnection();
+    await connection.execute(sql, values);
+    await connection.end();
+    res.status(201).json(logData);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // --- NOVAS ROTAS PARA CUSTOS FIXOS ---
 app.get("/api/costs", async (req, res) => {
-  const userId = req.user.uid;
   try {
     const connection = await createConnection();
     const [rows] = await connection.execute(
       "SELECT * FROM CustoFixo WHERE id_motorista = ? ORDER BY data_vencimento ASC",
-      [userId]
+      [req.user.uid]
     );
     await connection.end();
     res.json(rows);
   } catch (error) {
-    console.error("Erro ao obter custos:", error);
-    res.status(500).json({ error: "Erro no servidor" });
+    res.status(500).json({ error: error.message });
   }
 });
 
 app.post("/api/costs", async (req, res) => {
-  const userId = req.user.uid;
   const { descricao, valor, data_vencimento } = req.body;
   try {
     const connection = await createConnection();
     const sql =
       "INSERT INTO CustoFixo (id_motorista, descricao, valor, data_vencimento) VALUES (?, ?, ?, ?)";
     const [result] = await connection.execute(sql, [
-      userId,
+      req.user.uid,
       descricao,
       valor,
       data_vencimento,
@@ -124,25 +180,21 @@ app.post("/api/costs", async (req, res) => {
     await connection.end();
     res.status(201).json({ id_custo: result.insertId, ...req.body });
   } catch (error) {
-    console.error("Erro ao adicionar custo:", error);
-    res.status(500).json({ error: "Erro no servidor" });
+    res.status(500).json({ error: error.message });
   }
 });
 
 app.delete("/api/costs/:costId", async (req, res) => {
-  const userId = req.user.uid;
-  const { costId } = req.params;
   try {
     const connection = await createConnection();
     await connection.execute(
       "DELETE FROM CustoFixo WHERE id_custo = ? AND id_motorista = ?",
-      [costId, userId]
+      [req.params.costId, req.user.uid]
     );
     await connection.end();
     res.status(204).send();
   } catch (error) {
-    console.error("Erro ao apagar custo:", error);
-    res.status(500).json({ error: "Erro no servidor" });
+    res.status(500).json({ error: error.message });
   }
 });
 
