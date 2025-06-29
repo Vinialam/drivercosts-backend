@@ -102,8 +102,6 @@ app.post("/api/motoristas", async (req, res) => {
 });
 
 // --- ROTAS DE VEÍCULOS ---
-
-// Obter todos os veículos de um motorista
 app.get("/api/vehicles", async (req, res) => {
   const { uid } = req.user;
   let connection;
@@ -122,7 +120,6 @@ app.get("/api/vehicles", async (req, res) => {
   }
 });
 
-// Adicionar um novo veículo
 app.post("/api/vehicles", async (req, res) => {
   const { uid } = req.user;
   const {
@@ -136,7 +133,6 @@ app.post("/api/vehicles", async (req, res) => {
     capacidade_bateria,
     autonomia_carga_cheia,
   } = req.body;
-
   const sql = `
     INSERT INTO Veiculo 
     (id_motorista, marca, modelo, placa, ano, tipo, preco_litro_combustivel, km_por_litro, capacidade_bateria, autonomia_carga_cheia) 
@@ -154,7 +150,6 @@ app.post("/api/vehicles", async (req, res) => {
     capacidade_bateria,
     autonomia_carga_cheia,
   ];
-
   let connection;
   try {
     connection = await createConnection();
@@ -168,7 +163,6 @@ app.post("/api/vehicles", async (req, res) => {
   }
 });
 
-// Atualizar um veículo existente
 app.put("/api/vehicles/:id", async (req, res) => {
   const { uid } = req.user;
   const { id } = req.params;
@@ -183,7 +177,6 @@ app.put("/api/vehicles/:id", async (req, res) => {
     capacidade_bateria,
     autonomia_carga_cheia,
   } = req.body;
-
   const sql = `
         UPDATE Veiculo SET
             marca = ?, modelo = ?, placa = ?, ano = ?, tipo = ?,
@@ -203,13 +196,11 @@ app.put("/api/vehicles/:id", async (req, res) => {
     id,
     uid,
   ];
-
   let connection;
   try {
     connection = await createConnection();
     const [result] = await connection.execute(sql, values);
     await connection.end();
-
     if (result.affectedRows === 0) {
       return res
         .status(404)
@@ -225,18 +216,15 @@ app.put("/api/vehicles/:id", async (req, res) => {
   }
 });
 
-// Apagar um veículo
 app.delete("/api/vehicles/:id", async (req, res) => {
   const { uid } = req.user;
   const { id } = req.params;
-
   let connection;
   try {
     connection = await createConnection();
     const sql = "DELETE FROM Veiculo WHERE id_veiculo = ? AND id_motorista = ?";
     const [result] = await connection.execute(sql, [id, uid]);
     await connection.end();
-
     if (result.affectedRows === 0) {
       return res
         .status(404)
@@ -252,15 +240,112 @@ app.delete("/api/vehicles/:id", async (req, res) => {
   }
 });
 
-// --- ROTAS DE REGISTOS DIÁRIOS (LogDiario) ---
+// --- ROTAS DE CUSTOS FIXOS ---
+app.get("/api/custofixo", async (req, res) => {
+  const { uid } = req.user;
+  let connection;
+  try {
+    connection = await createConnection();
+    const [rows] = await connection.execute(
+      "SELECT * FROM CustoFixo WHERE id_motorista = ?",
+      [uid]
+    );
+    await connection.end();
+    res.json(rows);
+  } catch (e) {
+    console.error("Erro na rota GET /api/custofixo:", e.message);
+    if (connection) await connection.end();
+    res.status(500).json({ error: e.message });
+  }
+});
 
-// Obter todos os registos de um motorista
+app.post("/api/custofixo", async (req, res) => {
+  const { uid } = req.user;
+  const { descricao, valor, data_vencimento, tipo } = req.body;
+  let connection;
+  try {
+    connection = await createConnection();
+    const sql =
+      "INSERT INTO CustoFixo (id_motorista, descricao, valor, data_vencimento, tipo) VALUES (?, ?, ?, ?, ?)";
+    const [result] = await connection.execute(sql, [
+      uid,
+      descricao,
+      valor,
+      data_vencimento,
+      tipo,
+    ]);
+    await connection.end();
+    res.status(201).json({ id_custo: result.insertId, ...req.body });
+  } catch (e) {
+    console.error("Erro na rota POST /api/custofixo:", e.message);
+    if (connection) await connection.end();
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/custofixo/:id", async (req, res) => {
+  const { uid } = req.user;
+  const { id } = req.params;
+  const { descricao, valor, data_vencimento, tipo } = req.body;
+  let connection;
+  try {
+    connection = await createConnection();
+    const sql =
+      "UPDATE CustoFixo SET descricao = ?, valor = ?, data_vencimento = ?, tipo = ? WHERE id_custo = ? AND id_motorista = ?";
+    const [result] = await connection.execute(sql, [
+      descricao,
+      valor,
+      data_vencimento,
+      tipo,
+      id,
+      uid,
+    ]);
+    await connection.end();
+    if (result.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({
+          error: "Custo não encontrado ou não pertence a este utilizador.",
+        });
+    }
+    res.json({ message: "Custo atualizado com sucesso." });
+  } catch (e) {
+    console.error("Erro na rota PUT /api/custofixo/:id:", e.message);
+    if (connection) await connection.end();
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete("/api/custofixo/:id", async (req, res) => {
+  const { uid } = req.user;
+  const { id } = req.params;
+  let connection;
+  try {
+    connection = await createConnection();
+    const sql = "DELETE FROM CustoFixo WHERE id_custo = ? AND id_motorista = ?";
+    const [result] = await connection.execute(sql, [id, uid]);
+    await connection.end();
+    if (result.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({
+          error: "Custo não encontrado ou não pertence a este utilizador.",
+        });
+    }
+    res.status(204).send();
+  } catch (e) {
+    console.error("Erro na rota DELETE /api/custofixo/:id:", e.message);
+    if (connection) await connection.end();
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- ROTAS DE REGISTOS DIÁRIOS (LogDiario) ---
 app.get("/api/logs", async (req, res) => {
   const { uid } = req.user;
   let connection;
   try {
     connection = await createConnection();
-    // Junta LogDiario com Veiculo para obter o id_motorista
     const sql = `
             SELECT ld.* FROM LogDiario ld
             JOIN Veiculo v ON ld.id_veiculo = v.id_veiculo
@@ -277,7 +362,6 @@ app.get("/api/logs", async (req, res) => {
   }
 });
 
-// Adicionar ou atualizar um registo diário
 app.post("/api/logs", async (req, res) => {
   const { uid } = req.user;
   const {
@@ -289,8 +373,6 @@ app.post("/api/logs", async (req, res) => {
     ganhos_99,
     gastos_extras,
   } = req.body;
-
-  // Verifica se o veículo pertence ao motorista logado
   let connection;
   try {
     connection = await createConnection();
@@ -298,14 +380,12 @@ app.post("/api/logs", async (req, res) => {
       "SELECT id_veiculo FROM Veiculo WHERE id_veiculo = ? AND id_motorista = ?",
       [id_veiculo, uid]
     );
-
     if (vehicleCheck.length === 0) {
       await connection.end();
       return res
         .status(403)
         .json({ error: "Este veículo não pertence ao utilizador." });
     }
-
     const columns =
       "id_veiculo, data, km_rodado, corridas, ganhos_uber, ganhos_99, gastos_extras";
     const placeholders = "?, ?, ?, ?, ?, ?, ?";
@@ -318,14 +398,11 @@ app.post("/api/logs", async (req, res) => {
       ganhos_99,
       gastos_extras,
     ];
-
-    // ON DUPLICATE KEY UPDATE para inserir ou atualizar se já existir um registo para o mesmo veículo e data
     const onUpdate = `
             km_rodado = VALUES(km_rodado), corridas = VALUES(corridas), 
             ganhos_uber = VALUES(ganhos_uber), ganhos_99 = VALUES(ganhos_99), gastos_extras = VALUES(gastos_extras)
         `;
     const sql = `INSERT INTO LogDiario (${columns}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${onUpdate}`;
-
     await connection.execute(sql, values);
     await connection.end();
     res
