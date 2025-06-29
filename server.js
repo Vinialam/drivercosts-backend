@@ -31,8 +31,6 @@ app.use(cors());
 app.use(express.json());
 
 // --- Configuração da Base de Dados ---
-// Utiliza a variável DATABASE_URL se estiver disponível (padrão do Render/Railway)
-// ou as variáveis individuais como alternativa.
 const dbConfig = process.env.DATABASE_URL
   ? {
       uri: process.env.DATABASE_URL,
@@ -120,9 +118,7 @@ app.get("/api/vehicles", async (req, res) => {
   } catch (e) {
     console.error("Erro na rota GET /api/vehicles:", e.message);
     if (connection) await connection.end();
-    res.status(500).json({
-      error: e.message,
-    });
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -164,16 +160,11 @@ app.post("/api/vehicles", async (req, res) => {
     connection = await createConnection();
     const [result] = await connection.execute(sql, values);
     await connection.end();
-    res.status(201).json({
-      id: result.insertId,
-      ...req.body,
-    });
+    res.status(201).json({ id: result.insertId, ...req.body });
   } catch (e) {
     console.error("Erro na rota POST /api/vehicles:", e.message);
     if (connection) await connection.end();
-    res.status(500).json({
-      error: e.message,
-    });
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -195,15 +186,8 @@ app.put("/api/vehicles/:id", async (req, res) => {
 
   const sql = `
         UPDATE Veiculo SET
-            marca = ?,
-            modelo = ?,
-            placa = ?,
-            ano = ?,
-            tipo = ?,
-            preco_litro_combustivel = ?,
-            km_por_litro = ?,
-            capacidade_bateria = ?,
-            autonomia_carga_cheia = ?
+            marca = ?, modelo = ?, placa = ?, ano = ?, tipo = ?,
+            preco_litro_combustivel = ?, km_por_litro = ?, capacidade_bateria = ?, autonomia_carga_cheia = ?
         WHERE id_veiculo = ? AND id_motorista = ?
     `;
   const values = [
@@ -260,9 +244,95 @@ app.delete("/api/vehicles/:id", async (req, res) => {
           error: "Veículo não encontrado ou não pertence a este utilizador.",
         });
     }
-    res.status(204).send(); // 204 No Content - sucesso, sem corpo de resposta
+    res.status(204).send();
   } catch (e) {
     console.error("Erro na rota DELETE /api/vehicles/:id:", e.message);
+    if (connection) await connection.end();
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- ROTAS DE REGISTOS DIÁRIOS (LogDiario) ---
+
+// Obter todos os registos de um motorista
+app.get("/api/logs", async (req, res) => {
+  const { uid } = req.user;
+  let connection;
+  try {
+    connection = await createConnection();
+    // Junta LogDiario com Veiculo para obter o id_motorista
+    const sql = `
+            SELECT ld.* FROM LogDiario ld
+            JOIN Veiculo v ON ld.id_veiculo = v.id_veiculo
+            WHERE v.id_motorista = ?
+            ORDER BY ld.data DESC
+        `;
+    const [rows] = await connection.execute(sql, [uid]);
+    await connection.end();
+    res.json(rows);
+  } catch (e) {
+    console.error("Erro na rota GET /api/logs:", e.message);
+    if (connection) await connection.end();
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Adicionar ou atualizar um registo diário
+app.post("/api/logs", async (req, res) => {
+  const { uid } = req.user;
+  const {
+    id_veiculo,
+    data,
+    km_rodado,
+    corridas,
+    ganhos_uber,
+    ganhos_99,
+    gastos_extras,
+  } = req.body;
+
+  // Verifica se o veículo pertence ao motorista logado
+  let connection;
+  try {
+    connection = await createConnection();
+    const [vehicleCheck] = await connection.execute(
+      "SELECT id_veiculo FROM Veiculo WHERE id_veiculo = ? AND id_motorista = ?",
+      [id_veiculo, uid]
+    );
+
+    if (vehicleCheck.length === 0) {
+      await connection.end();
+      return res
+        .status(403)
+        .json({ error: "Este veículo não pertence ao utilizador." });
+    }
+
+    const columns =
+      "id_veiculo, data, km_rodado, corridas, ganhos_uber, ganhos_99, gastos_extras";
+    const placeholders = "?, ?, ?, ?, ?, ?, ?";
+    const values = [
+      id_veiculo,
+      data,
+      km_rodado,
+      corridas,
+      ganhos_uber,
+      ganhos_99,
+      gastos_extras,
+    ];
+
+    // ON DUPLICATE KEY UPDATE para inserir ou atualizar se já existir um registo para o mesmo veículo e data
+    const onUpdate = `
+            km_rodado = VALUES(km_rodado), corridas = VALUES(corridas), 
+            ganhos_uber = VALUES(ganhos_uber), ganhos_99 = VALUES(ganhos_99), gastos_extras = VALUES(gastos_extras)
+        `;
+    const sql = `INSERT INTO LogDiario (${columns}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${onUpdate}`;
+
+    await connection.execute(sql, values);
+    await connection.end();
+    res
+      .status(201)
+      .json({ message: "Registo diário guardado com sucesso.", ...req.body });
+  } catch (e) {
+    console.error("Erro na rota POST /api/logs:", e.message);
     if (connection) await connection.end();
     res.status(500).json({ error: e.message });
   }
